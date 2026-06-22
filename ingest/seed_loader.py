@@ -41,6 +41,15 @@ SEEDS: dict[str, dict] = {
         "source_url": "https://www.cbr.ru/analytics/dkp/inflationary_expectations/",
         "notes": "Ручной seed из PDF/пресс-релизов ИнФОМ.",
     },
+    "deposit_rate": {
+        "csv": "deposit_rate.csv",
+        "title": "Макс. ставка по вкладам физлиц (топ-10 банков)",
+        "unit": "% годовых",
+        "freq": "D", "panel": "brake",
+        "source_name": "Банк России",
+        "source_url": "https://www.cbr.ru/statistics/avgprocstav/",
+        "notes": "Декадные данные (виджет cbr.ru) — ручной seed. Трекает ключевую ставку.",
+    },
     "budget_deficit": {
         "csv": "budget_deficit.csv",
         "title": "Дефицит федбюджета (накопл. с начала года)",
