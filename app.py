@@ -290,10 +290,18 @@ def render_result() -> None:
                           hovermode="closest",
                           legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
         st.plotly_chart(fig, width="stretch")
+        # «Во сколько раз» считаем динамически (ряд авто-обновляется — не хардкодить).
+        ratio = ""
+        common = (set(cpi["date"]) & set(obs["date"])) if not (cpi.empty or obs.empty) else set()
+        if common:
+            dd = max(common)
+            cc = cpi.loc[cpi["date"] == dd, "value"].iloc[0]
+            oo = obs.loc[obs["date"] == dd, "value"].iloc[0]
+            if cc:
+                ratio = f" На {dd:%m.%Y} наблюдаемая в {oo / cc:.1f} раза выше официальной."
         st.caption(
             "Официальная ИПЦ (Росстат/ЦБ) и наблюдаемая/ожидания (опрос ИнФОМ) — `final`, "
-            "тянутся с cbr.ru. Разрыв «ощущаемая vs официальная» — суть дашборда: "
-            "люди чувствуют инфляцию в ~2,5–3 раза выше официальной."
+            "тянутся с cbr.ru. Разрыв «ощущаемая vs официальная» — суть дашборда." + ratio
         )
 
     # 2) Денежная масса: уровни + темп г/г с полосой цели.
