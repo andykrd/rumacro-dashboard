@@ -1,0 +1,23 @@
+# venv / окружение
+.venv/
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# SQLite — база не в гите (см. CLAUDE.md), сиды в data/seed/ — в гите
+data/*.db
+data/*.db-journal
+data/*.db-wal
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
