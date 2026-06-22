@@ -23,24 +23,8 @@ SEED_DIR = Path(__file__).resolve().parent.parent / "data" / "seed"
 
 # series_id → метаданные + имя CSV. panel: result | gas (см. PRD §7).
 SEEDS: dict[str, dict] = {
-    "observed_infl": {
-        "csv": "observed_inflation.csv",
-        "title": "Наблюдаемая инфляция (опрос ИнФОМ)",
-        "unit": "% (медиана, за 12 мес)",
-        "freq": "M", "panel": "result",
-        "source_name": "Банк России / ИнФОМ",
-        "source_url": "https://www.cbr.ru/analytics/dkp/inflationary_expectations/",
-        "notes": "Ручной seed из PDF/пресс-релизов ИнФОМ. Производная gap = observed − cpi_yoy — шаг 5.",
-    },
-    "infl_expect": {
-        "csv": "infl_expect.csv",
-        "title": "Инфляционные ожидания населения на год (ИнФОМ)",
-        "unit": "% (медиана, на 12 мес вперёд)",
-        "freq": "M", "panel": "result",
-        "source_name": "Банк России / ИнФОМ",
-        "source_url": "https://www.cbr.ru/analytics/dkp/inflationary_expectations/",
-        "notes": "Ручной seed из PDF/пресс-релизов ИнФОМ.",
-    },
+    # observed_infl / infl_expect перенесены в ingest/cbr_inflexp.py (fetch, flag=final):
+    # полный месячный ряд берётся из xlsx-отчёта ИнФОМ, а не из ручного seed.
     "deposit_rate": {
         "csv": "deposit_rate.csv",
         "title": "Макс. ставка по вкладам физлиц (топ-10 банков)",

@@ -41,10 +41,11 @@ def bootstrap() -> list[str]:
     from ingest.seed_loader import load_all
     load_all()
 
-    from ingest import cbr_cpi, cbr_fx, cbr_keyrate, cbr_money
+    from ingest import cbr_cpi, cbr_fx, cbr_inflexp, cbr_keyrate, cbr_money
     errors: list[str] = []
     for name, fn in [("ключевая ставка", cbr_keyrate.ingest), ("курс", cbr_fx.ingest),
-                     ("денежные агрегаты", cbr_money.ingest), ("ИПЦ", cbr_cpi.ingest)]:
+                     ("денежные агрегаты", cbr_money.ingest), ("ИПЦ", cbr_cpi.ingest),
+                     ("ИнФОМ (наблюдаемая/ожидания)", cbr_inflexp.ingest)]:
         try:
             fn()
         except Exception as exc:  # фетч не должен ронять дашборд
@@ -100,7 +101,7 @@ def _last(df: pd.DataFrame):
     return df["value"].iloc[-1] if not df.empty else None
 
 
-_SEED_IDS = {"observed_infl", "infl_expect", "deposit_rate", "budget_deficit", "nwf_liquid"}
+_SEED_IDS = {"deposit_rate", "budget_deficit", "nwf_liquid"}
 
 
 # ─────────────────────────────── overview ───────────────────────────────────
@@ -127,9 +128,9 @@ def render_overview() -> None:
                    help=f"ориентир ЦБ {M2_TARGET_LO:g}–{M2_TARGET_HI:g}% — сейчас выше")
     cols[2].metric("💰 Дефицит / план", f"{_last(dvp):.0f}%" if not dvp.empty else "—",
                    help=f"накопл. дефицит ÷ годовой план {BUDGET_PLAN_2026} трлн ₽")
-    cols[3].metric("🌡️ Официальная ИПЦ", f"{_last(cpi):g}%" if not cpi.empty else "—",
+    cols[3].metric("🌡️ Официальная ИПЦ", f"{_last(cpi):.1f}%" if not cpi.empty else "—",
                    help="Росстат/ЦБ, % г/г")
-    cols[4].metric("👁️ Наблюдаемая", f"{_last(obs):g}%" if not obs.empty else "—",
+    cols[4].metric("👁️ Наблюдаемая", f"{_last(obs):.1f}%" if not obs.empty else "—",
                    help="опрос ИнФОМ")
     cols[5].metric("↔️ Разрыв инфляции", f"+{_last(g):.1f} пп" if not g.empty else "—",
                    help=f"наблюдаемая − официальная, общий месяц {g['date'].iloc[-1]:%m.%Y}"
@@ -271,7 +272,7 @@ def render_result() -> None:
             fig.add_trace(go.Scatter(
                 x=d["date"], y=d["value"], mode="lines", name="Официальная ИПЦ",
                 line=dict(width=2.5, color="#1d3557"),
-                hovertemplate="%{x|%m.%Y}<br>ИПЦ: %{y:g}% г/г"
+                hovertemplate="%{x|%m.%Y}<br>ИПЦ: %{y:.1f}% г/г"
                               + _hover_tag(m, d["date"].iloc[-1]) + "<extra></extra>"))
         for sid, name, color in [("observed_infl", "Наблюдаемая (ИнФОМ)", "#e63946"),
                                  ("infl_expect", "Ожидания населения", "#f4a261")]:
@@ -283,15 +284,16 @@ def render_result() -> None:
             fig.add_trace(go.Scatter(
                 x=sc["date"], y=sc["value"], mode="lines+markers", name=name,
                 line=dict(width=2, color=color),
-                hovertemplate=f"{name}<br>%{{x|%m.%Y}}: %{{y:g}}%"
+                hovertemplate=f"{name}<br>%{{x|%m.%Y}}: %{{y:.1f}}%"
                               + _hover_tag(m, sc["date"].iloc[-1]) + "<extra></extra>"))
         fig.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="% г/г",
                           hovermode="closest",
                           legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
         st.plotly_chart(fig, width="stretch")
         st.caption(
-            "Официальная ИПЦ — `final` (Росстат/ЦБ); наблюдаемая и ожидания — `seed` "
-            "(отчёты ИнФОМ). Разрыв «ощущаемая vs официальная» — суть дашборда."
+            "Официальная ИПЦ (Росстат/ЦБ) и наблюдаемая/ожидания (опрос ИнФОМ) — `final`, "
+            "тянутся с cbr.ru. Разрыв «ощущаемая vs официальная» — суть дашборда: "
+            "люди чувствуют инфляцию в ~2,5–3 раза выше официальной."
         )
 
     # 2) Денежная масса: уровни + темп г/г с полосой цели.
@@ -370,10 +372,10 @@ def render_methodology() -> None:
 *силы* (бюджет vs ЦБ) и *разрывы* между официальными рядами. Любое расхождение —
 повод задуматься, а не готовая цифра.
 
-**Флаги данных.** `final` — автозагрузка с первоисточника (ставка, курс, деньги, ИПЦ);
-`seed` — ручной ввод из PDF/виджетов (наблюдаемая инфляция и ожидания ИнФОМ, ставки
-по вкладам, дефицит бюджета, ФНБ), дополняется помесячно; `prelim`/`revised` — для
-предварительных/пересмотренных значений. Частоту храним исходную (D/M), не апсемплим.
+**Флаги данных.** `final` — автозагрузка с первоисточника (ставка, курс, деньги, ИПЦ,
+наблюдаемая инфляция и ожидания ИнФОМ); `seed` — ручной ввод из виджетов/пресс-релизов
+(ставки по вкладам, дефицит бюджета, ФНБ), дополняется помесячно; `prelim`/`revised` —
+для предварительных/пересмотренных значений. Частоту храним исходную (D/M), не апсемплим.
 
 **Формулы (производные считаются на лету, не хранятся):**
 - `YoY` = значение[t] / значение[t − 12 мес] − 1.
