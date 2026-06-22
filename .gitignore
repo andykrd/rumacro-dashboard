@@ -17,6 +17,11 @@ data/*.db-wal
 # Streamlit
 .streamlit/secrets.toml
 
+# Секреты окружения (CBR_PROXY с логином/паролем и пр.) — НЕ в гит
+.env
+.env.local
+.env.*.local
+
 # IDE / OS
 .vscode/
 .idea/

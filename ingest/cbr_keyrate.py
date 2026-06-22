@@ -27,12 +27,11 @@ import xml.etree.ElementTree as ET
 from datetime import date
 from pathlib import Path
 
-import requests
-
 # db.py лежит в корне проекта — кладём корень в путь, чтобы модуль запускался
 # и как скрипт (python ingest/cbr_keyrate.py), и как пакет (python -m ingest.cbr_keyrate).
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from db import DB_PATH, upsert_series, write_observations  # noqa: E402
+from ingest import cbr_session  # noqa: E402
 
 CBR_SOAP_URL = "https://www.cbr.ru/DailyInfoWebServ/DailyInfo.asmx"
 # Дата, на которую формат ответа сверялся с живым сервисом.
@@ -54,17 +53,7 @@ _SOAP_TEMPLATE = (
     "</soap12:Envelope>"
 )
 
-_HEADERS = {
-    "Content-Type": "application/soap+xml; charset=utf-8",
-    "User-Agent": "rumacro-dashboard/0.1 (+keyrate ingest)",
-}
-
-
-def _session() -> requests.Session:
-    """Сессия без наследования прокси из окружения — к ЦБ идём напрямую."""
-    s = requests.Session()
-    s.trust_env = False  # игнорировать http_proxy / ALL_PROXY (иностранный exit режется ЦБ)
-    return s
+_HEADERS = {"Content-Type": "application/soap+xml; charset=utf-8"}
 
 
 def fetch_key_rate(from_date: str = DEFAULT_FROM, to_date: str | None = None) -> list[tuple[str, float]]:
@@ -74,7 +63,7 @@ def fetch_key_rate(from_date: str = DEFAULT_FROM, to_date: str | None = None) ->
     """
     to_date = to_date or date.today().isoformat()
     body = _SOAP_TEMPLATE.format(from_date=from_date, to_date=to_date)
-    resp = _session().post(CBR_SOAP_URL, data=body.encode("utf-8"), headers=_HEADERS, timeout=30)
+    resp = cbr_session().post(CBR_SOAP_URL, data=body.encode("utf-8"), headers=_HEADERS, timeout=30)
     resp.raise_for_status()
 
     root = ET.fromstring(resp.text)

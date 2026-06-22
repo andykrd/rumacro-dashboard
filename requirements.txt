@@ -1,6 +1,6 @@
 streamlit
 pandas
-requests
+requests[socks]
 plotly
 openpyxl
 python-dateutil
