@@ -21,29 +21,10 @@ init_db()  # идемпотентно
 
 CPI_TARGET = 4.0           # цель ЦБ по инфляции, %
 M2_TARGET_LO, M2_TARGET_HI = 5.0, 10.0  # ориентир ЦБ по приросту M2, % г/г
-
-
-# ─────────────────────────── диапазон дат (PRD §9) ───────────────────────────
-st.sidebar.header("Диапазон дат")
-_RANGES = ["24 месяца", "12 месяцев", "2026 год", "Весь период"]
-st.sidebar.radio("Показывать", _RANGES, index=0, key="date_range")  # состояние — в session_state
-
-
-def _date_from() -> pd.Timestamp | None:
-    choice = st.session_state.get("date_range", "24 месяца")
-    if choice == "Весь период":
-        return None
-    if choice == "2026 год":
-        return pd.Timestamp("2026-01-01")
-    months = 12 if choice == "12 месяцев" else 24
-    return pd.Timestamp.today().normalize() - pd.DateOffset(months=months)
-
-
-DATE_FROM = _date_from()
-st.sidebar.caption(
-    "Короткие ряды (наблюдаемая инфляция, бюджет, ФНБ — `seed`) видны при любом "
-    "диапазоне: оси подстраиваются под данные."
-)
+# Окна по умолчанию для длинных рядов. Интерактивный зум — встроенный в Plotly
+# (тянуть рамкой по графику; двойной клик — сброс), поэтому отдельной панели нет.
+MONEY_FROM = pd.Timestamp("2021-01-01")  # деньги/ЧТОГУ: видно удвоение M2 с 2021
+RECENT = pd.Timestamp("2024-01-01")      # ставка/инфляция/курс: пик ставки и текущий цикл
 
 
 # ─────────────────────────────── хелперы ────────────────────────────────────
@@ -56,11 +37,10 @@ def _fmt_updated(iso: str | None) -> str:
         return iso
 
 
-def _clip(df: pd.DataFrame) -> pd.DataFrame:
-    """Обрезать ряд по выбранному диапазону. Производные считать ДО обрезки!"""
-    if DATE_FROM is None or df.empty:
-        return df
-    return df[df["date"] >= DATE_FROM]
+def _since(df: pd.DataFrame, ts: pd.Timestamp) -> pd.DataFrame:
+    """Окно отображения для длинных рядов (производные считать ДО обрезки).
+    Короткие seed-ряды (бюджет/ФНБ — 2026) не режем. Зум — встроенный в Plotly."""
+    return df if df.empty else df[df["date"] >= ts]
 
 
 def _hover_tag(meta: dict, last_date) -> str:
@@ -139,7 +119,7 @@ def render_gas() -> None:
         c1.metric("Дефицит, накопл.", f"{_last(bud):g} трлн ₽")
         c2.metric("Это от годового плана", f"{_last(dvp):.0f}%",
                   help=f"план-2026 = {BUDGET_PLAN_2026} трлн ₽ (перекрыт уже в марте)")
-        b = _clip(bud)
+        b = bud  # бюджет — короткий seed-ряд (2026), без обрезки
         meta = get_series_meta("budget_deficit") or {}
         fig = go.Figure()
         fig.add_trace(go.Bar(
@@ -163,7 +143,7 @@ def render_gas() -> None:
         if nwf.empty:
             st.caption("нет данных")
         else:
-            n = _clip(nwf)
+            n = nwf  # короткий seed-ряд
             meta = get_series_meta("nwf_liquid") or {}
             fig = go.Figure(go.Scatter(
                 x=n["date"], y=n["value"], mode="lines+markers",
@@ -178,7 +158,7 @@ def render_gas() -> None:
         if chtogu.empty:
             st.caption("нет данных")
         else:
-            ch = _clip(chtogu)
+            ch = _since(chtogu, MONEY_FROM)
             meta = get_series_meta("net_gov_claims") or {}
             fig = go.Figure(go.Scatter(
                 x=ch["date"], y=ch["value"], mode="lines",
@@ -214,7 +194,7 @@ def render_brake() -> None:
 
     fig = go.Figure()
     if not kr.empty:
-        k = _clip(kr)
+        k = _since(kr, RECENT)
         m = get_series_meta("key_rate") or {}
         fig.add_trace(go.Scatter(
             x=k["date"], y=k["value"], mode="lines", name="Ключевая ставка",
@@ -222,7 +202,7 @@ def render_brake() -> None:
             hovertemplate="%{x|%d.%m.%Y}<br>ставка: %{y:g}%"
                           + _hover_tag(m, k["date"].iloc[-1]) + "<extra></extra>"))
     if not dep.empty:
-        d = _clip(dep)
+        d = _since(dep, RECENT)
         m = get_series_meta("deposit_rate") or {}
         fig.add_trace(go.Scatter(
             x=d["date"], y=d["value"], mode="lines+markers", name="Макс. ставка по вкладам",
@@ -251,7 +231,7 @@ def render_result() -> None:
         fig.add_hline(y=CPI_TARGET, line=dict(color="#6c757d", width=1, dash="dot"),
                       annotation_text="цель ЦБ 4%", annotation_position="bottom right")
         if not cpi.empty:
-            d = _clip(cpi)
+            d = _since(cpi, RECENT)
             m = get_series_meta("cpi_yoy") or {}
             fig.add_trace(go.Scatter(
                 x=d["date"], y=d["value"], mode="lines", name="Официальная ИПЦ",
@@ -263,7 +243,7 @@ def render_result() -> None:
             s = read_series(sid)
             if s.empty:
                 continue
-            sc = _clip(s)
+            sc = _since(s, RECENT)
             m = get_series_meta(sid) or {}
             fig.add_trace(go.Scatter(
                 x=sc["date"], y=sc["value"], mode="lines+markers", name=name,
@@ -291,7 +271,7 @@ def render_result() -> None:
             if s.empty:
                 continue
             any_money = True
-            sc = _clip(s)
+            sc = _since(s, MONEY_FROM)
             m = get_series_meta(sid) or {}
             fig.add_trace(go.Scatter(
                 x=sc["date"], y=sc["value"], mode="lines", name=name,
@@ -309,7 +289,7 @@ def render_result() -> None:
     with mcol2:
         m2y = T.yoy(read_series("m2"))
         if not m2y.empty:
-            y = _clip(m2y)
+            y = _since(m2y, MONEY_FROM)
             m = get_series_meta("m2") or {}
             fig = go.Figure()
             fig.add_hrect(y0=M2_TARGET_LO, y1=M2_TARGET_HI, fillcolor="#2a9d8f", opacity=0.12,
@@ -334,7 +314,7 @@ def render_context() -> None:
         if df.empty:
             _empty_hint("usdrub", "ingest/cbr_fx.py")
             return
-        d = _clip(df)
+        d = _since(df, RECENT)
         st.metric("USD/RUB", f"{_last(df):,.2f} ₽".replace(",", " "))
         fig = go.Figure(go.Scatter(
             x=d["date"], y=d["value"], mode="lines", line=dict(width=2, color="#264653"),
