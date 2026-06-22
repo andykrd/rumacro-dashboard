@@ -6,6 +6,7 @@
 Принцип (PRD §2): это ПРОКСИ и сопоставление рядов, а не «настоящая инфляция».
 Сырые ряды — в БД (ingest/*, data/seed/*); производные считаются на лету (transforms.py).
 """
+import os
 from datetime import datetime
 
 import pandas as pd
@@ -17,7 +18,41 @@ from db import get_series_meta, init_db, last_updated, read_series
 from transforms import BUDGET_PLAN_2026
 
 st.set_page_config(page_title="Две руки российской макро", page_icon="🤝", layout="wide")
-init_db()  # идемпотентно
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Загрузка данных…")
+def bootstrap() -> list[str]:
+    """Гибридная загрузка данных (раз в 6 ч на процесс).
+
+    Сиды (наблюдаемая инфляция, бюджет, ФНБ, вклады) — всегда из data/seed/*.csv
+    (в репозитории). Ряды ЦБ дотягиваем с cbr.ru. На облаке (иностранный IP) ЦБ
+    доступен только через прокси — мостим секрет st.secrets['CBR_PROXY'] в env,
+    его читает ingest.cbr_session. Фетч ЦБ — best-effort: если недоступен,
+    показываем seed-данные и предупреждение (дашборд не падает).
+    """
+    try:
+        proxy = st.secrets.get("CBR_PROXY")  # секретов может не быть локально
+    except Exception:
+        proxy = None
+    if proxy:
+        os.environ["CBR_PROXY"] = proxy
+
+    init_db()
+    from ingest.seed_loader import load_all
+    load_all()
+
+    from ingest import cbr_cpi, cbr_fx, cbr_keyrate, cbr_money
+    errors: list[str] = []
+    for name, fn in [("ключевая ставка", cbr_keyrate.ingest), ("курс", cbr_fx.ingest),
+                     ("денежные агрегаты", cbr_money.ingest), ("ИПЦ", cbr_cpi.ingest)]:
+        try:
+            fn()
+        except Exception as exc:  # фетч не должен ронять дашборд
+            errors.append(f"{name} ({type(exc).__name__})")
+    return errors
+
+
+_BOOT_ERRORS = bootstrap()
 
 CPI_TARGET = 4.0           # цель ЦБ по инфляции, %
 M2_TARGET_LO, M2_TARGET_HI = 5.0, 10.0  # ориентир ЦБ по приросту M2, % г/г
@@ -366,6 +401,12 @@ def render_methodology() -> None:
 
 # ─────────────────────────────── сборка ─────────────────────────────────────
 render_overview()
+if _BOOT_ERRORS:
+    st.warning(
+        "⚠️ Не удалось обновить с ЦБ: " + ", ".join(_BOOT_ERRORS)
+        + ". Показаны последние доступные / seed-данные. "
+        "На облаке проверьте секрет `CBR_PROXY` (нужен РФ-прокси)."
+    )
 st.divider()
 render_gas()
 st.divider()
