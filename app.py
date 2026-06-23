@@ -99,6 +99,41 @@ def _empty_hint(series_id: str, script: str) -> None:
     st.warning(f"Нет данных по `{series_id}`. Запустите загрузчик:\n\n`python {script}`")
 
 
+def compute_alerts() -> list[dict]:
+    """Правиловые ИНФОРМАЦИОННЫЕ алерты (§6): пороги по истории/значению, антидребезг.
+
+    Никаких прогнозов. Каждый алерт несёт правило и данные за ним. Пороги адаптивные
+    (перцентиль собственной истории), где возможно. Алерты по Urals/топливу появятся
+    с соответствующими рядами.
+    """
+    alerts: list[dict] = []
+
+    # 1. Разрыв «наблюдаемая − официальная» в верхнем дециле своей истории.
+    g = T.gap(read_series("observed_infl"), read_series("cpi_yoy"))
+    if not g.empty:
+        pct = T.percentile_history(g)
+        if pct is not None and pct >= 90:
+            alerts.append({"title": "Разрыв инфляции в верхнем дециле",
+                           "detail": f"наблюдаемая − официальная = {g['value'].iloc[-1]:.1f} пп — "
+                                     f"{pct:.0f}-й перцентиль своей истории. Правило: разрыв ≥ 90-го перцентиля."})
+
+    # 2. Накопленный дефицит превысил годовой план.
+    dvp = T.deficit_vs_plan(read_series("budget_deficit"))
+    if not dvp.empty and dvp["value"].iloc[-1] > 100:
+        alerts.append({"title": "Годовой план по дефициту превышен",
+                       "detail": f"накопл. дефицит = {dvp['value'].iloc[-1]:.0f}% годового плана "
+                                 f"({BUDGET_PLAN_2026} трлн ₽). Правило: deficit_vs_plan > 100%."})
+
+    # 3. M2 г/г выше коридора ЦБ (>10%) ≥3 мес подряд (антидребезг).
+    m2y = T.yoy(read_series("m2"))
+    tail = m2y["value"].tail(3)
+    if len(tail) == 3 and (tail > M2_TARGET_HI).all():
+        alerts.append({"title": "M2 выше коридора ЦБ ≥3 мес подряд",
+                       "detail": f"M2 г/г = {m2y['value'].iloc[-1]:.1f}% > цели {M2_TARGET_HI:g}%, "
+                                 f"3-й мес подряд. Правило: >{M2_TARGET_HI:g}% ≥3 периодов (антидребезг)."})
+    return alerts
+
+
 def _last(df: pd.DataFrame):
     return df["value"].iloc[-1] if not df.empty else None
 
@@ -492,6 +527,23 @@ def render_methodology() -> None:
         )
 
 
+def render_alerts() -> None:
+    """Строка активных сигналов в шапке + экспандер с правилами (§6)."""
+    alerts = compute_alerts()
+    if alerts:
+        st.error("**Активные сигналы:** " + " · ".join(f"🚨 {a['title']}" for a in alerts))
+    with st.expander(f"🚨 Сигналы расхождения — правила ({len(alerts)} активны)", expanded=False):
+        st.caption(
+            "Информационные правиловые сигналы, **не прогноз**. Пороги — по собственной истории "
+            "(перцентиль) или значению, с антидребезгом (N периодов подряд). Каждый несёт правило и данные."
+        )
+        for a in alerts:
+            st.markdown(f"- 🚨 **{a['title']}** — {a['detail']}")
+        if not alerts:
+            st.caption("Сейчас активных сигналов нет.")
+        st.caption("Сигналы по Urals (< бюджетных $59) и топливу появятся с соответствующими рядами.")
+
+
 # ─────────────────────────────── сборка ─────────────────────────────────────
 render_overview()
 if _BOOT_ERRORS:
@@ -500,6 +552,7 @@ if _BOOT_ERRORS:
         + ". Показаны последние доступные / seed-данные. "
         "На облаке проверьте секрет `CBR_PROXY` (нужен РФ-прокси)."
     )
+render_alerts()
 st.divider()
 render_gas()
 st.divider()
