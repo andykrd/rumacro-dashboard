@@ -52,6 +52,15 @@ SEEDS: dict[str, dict] = {
         "source_url": "https://minfin.gov.ru/ru/perfomance/nationalwealthfund/",
         "notes": "Ручной seed. Снимок на 1-е число месяца.",
     },
+    "gdp_real_yoy": {
+        "csv": "gdp_real_yoy.csv",
+        "title": "Реальный ВВП, % г/г",
+        "unit": "% г/г",
+        "freq": "Q", "panel": "context",
+        "source_name": "Росстат",
+        "source_url": "https://rosstat.gov.ru/folder/313",
+        "notes": "Ручной seed (верифиц. кварталы). Вход для naive_qtm = M2 г/г − ВВП г/г (V=const).",
+    },
 }
 
 

@@ -101,7 +101,12 @@ def _last(df: pd.DataFrame):
     return df["value"].iloc[-1] if not df.empty else None
 
 
-_SEED_IDS = {"deposit_rate", "budget_deficit", "nwf_liquid"}
+def _qlabel(ts) -> str:
+    """Timestamp → 'Q1-26' (метка квартала, без хардкода)."""
+    return f"Q{(ts.month - 1) // 3 + 1}-{ts.year % 100:02d}"
+
+
+_SEED_IDS = {"deposit_rate", "budget_deficit", "nwf_liquid", "gdp_real_yoy"}
 
 
 # ─────────────────────────────── overview ───────────────────────────────────
@@ -119,9 +124,12 @@ def render_overview() -> None:
     obs = read_series("observed_infl")
     m2y = T.yoy(read_series("m2"))
     dvp = T.deficit_vs_plan(read_series("budget_deficit"))
+    gdp = read_series("gdp_real_yoy")
     g = T.gap(obs, cpi)
+    implied = (T.naive_qtm_infl(_last(m2y), _last(gdp))
+               if not m2y.empty and not gdp.empty else None)
 
-    cols = st.columns(6)
+    cols = st.columns(7)
     cols[0].metric("🛑 Ключевая ставка", f"{_last(kr):g}%" if not kr.empty else "—",
                    help="Банк России")
     cols[1].metric("💸 M2, % г/г", f"{_last(m2y):.1f}%" if not m2y.empty else "—",
@@ -129,10 +137,13 @@ def render_overview() -> None:
     cols[2].metric("💰 Дефицит / план", f"{_last(dvp):.0f}%" if not dvp.empty else "—",
                    help=f"накопл. дефицит ÷ годовой план {BUDGET_PLAN_2026} трлн ₽")
     cols[3].metric("🌡️ Официальная ИПЦ", f"{_last(cpi):.1f}%" if not cpi.empty else "—",
-                   help="Росстат/ЦБ, % г/г")
-    cols[4].metric("👁️ Наблюдаемая", f"{_last(obs):.1f}%" if not obs.empty else "—",
-                   help="опрос ИнФОМ")
-    cols[5].metric("↔️ Разрыв инфляции", f"+{_last(g):.1f} пп" if not g.empty else "—",
+                   help="Росстат/ЦБ, измеренная корзина, % г/г")
+    cols[4].metric("💵 По деньгам*", f"{implied:.1f}%" if implied is not None else "—",
+                   help="M2 г/г − реальный ВВП г/г. *Прокси при допущении V=const → "
+                        "сейчас ЗАВЫШАЕТ, для справки, не измеритель")
+    cols[5].metric("👁️ Наблюдаемая", f"{_last(obs):.1f}%" if not obs.empty else "—",
+                   help="опрос ИнФОМ, ощущаемая населением")
+    cols[6].metric("↔️ Разрыв", f"+{_last(g):.1f} пп" if not g.empty else "—",
                    help=f"наблюдаемая − официальная, общий месяц {g['date'].iloc[-1]:%m.%Y}"
                    if not g.empty else "")
 
@@ -304,6 +315,41 @@ def render_result() -> None:
             "тянутся с cbr.ru. Разрыв «ощущаемая vs официальная» — суть дашборда." + ratio
         )
 
+    # «Три взгляда на инфляцию» (v1.5): вменённая «по деньгам» — для справки.
+    gdp = read_series("gdp_real_yoy")
+    m2y = T.yoy(read_series("m2"))
+    if not (cpi.empty or obs.empty or m2y.empty or gdp.empty):
+        implied = T.naive_qtm_infl(_last(m2y), _last(gdp))
+        gdp_v, gdp_d = _last(gdp), gdp["date"].iloc[-1]
+        st.markdown("**Три взгляда на инфляцию** — это *разные вещи*, а не три оценки одной")
+        lenses = [
+            (f"Официальная<br><sub>ИПЦ · {cpi['date'].iloc[-1]:%m.%Y}</sub>", _last(cpi), "#1d3557"),
+            ("«По деньгам» ⚠<br><sub>M2−ВВП · V=const</sub>", implied, "#e76f51"),
+            (f"Наблюдаемая<br><sub>ИнФОМ · {obs['date'].iloc[-1]:%m.%Y}</sub>", _last(obs), "#e63946"),
+        ]
+        fig = go.Figure()
+        for label, val, color in lenses:
+            fig.add_trace(go.Bar(
+                x=[label], y=[val], marker_color=color, width=0.5,
+                text=[f"{val:.1f}%"], textposition="outside", cliponaxis=False,
+                hovertemplate="%{x}: %{y:.1f}%<extra></extra>"))
+        fig.update_layout(height=340, margin=dict(l=10, r=10, t=40, b=10),
+                          yaxis_title="% г/г", showlegend=False)
+        st.plotly_chart(fig, width="stretch")
+        st.caption(
+            f"⚠️ **«По деньгам» — НЕ измеритель, а грубый прокси.** = M2 г/г ({_last(m2y):.1f}%) − "
+            f"реальный ВВП г/г ({gdp_v:+.1f}%, {_qlabel(gdp_d)}) при **допущении постоянной скорости "
+            f"денег (V=const)**, которое сейчас ЗАВЫШАЕТ оценку (в РФ скорость денег падает) — «для "
+            f"справки» (PRD §2). Официальная — измеренная корзина Росстата; наблюдаемая — медианная "
+            f"оценка населения. Дашборд показывает РАЗРЫВЫ между подходами, а не «настоящую» инфляцию."
+        )
+        econ = (f"сокращается ({gdp_v:+.1f}% г/г)" if gdp_v < 0
+                else f"растёт на {gdp_v:.1f}% г/г")
+        st.caption(
+            f"📉 Контекст: реальный ВВП в {_qlabel(gdp_d)} — экономика {econ}, а M2 растёт на "
+            f"{_last(m2y):.1f}% г/г. Чем сильнее деньги обгоняют выпуск, тем выше монетарный прокси."
+        )
+
     # 2) Денежная масса: уровни + темп г/г с полосой цели.
     st.markdown("**Денежная масса**")
     mcol1, mcol2 = st.columns([3, 2])
@@ -390,10 +436,12 @@ def render_methodology() -> None:
 - `Разрыв инфляции` = наблюдаемая (ИнФОМ) − официальная ИПЦ, пп (по общим месяцам).
 - `Дефицит / план` = накопленный дефицит ÷ годовой план ({BUDGET_PLAN_2026} трлн ₽).
 
-**Скорость денег и «наивный QTM» — НЕ считаем в v1.** Оценка «вменённой инфляции»
-из денег (`naive_qtm` = M2 г/г − реальный ВВП г/г) корректна только при допущении
-**V = const**, которое сейчас завышает результат — это «для справки», не измеритель.
-К тому же нужен квартальный номинальный ВВП (Росстат), в v1 не загружен.
+**«Инфляция по деньгам» (наивный QTM) — показываем «для справки».**
+`naive_qtm` = M2 г/г − реальный ВВП г/г (из уравнения обмена MV=PY при **V=const**).
+Это монетарный ПРОКСИ, не измеритель: допущение V=const сейчас **завышает** оценку,
+т.к. скорость денег в РФ падает (M2 растёт быстрее номинального ВВП). Реальный ВВП —
+квартальный seed (Росстат). Скорость денег (velocity = номинальный ВВП ÷ M2) пока не
+считаем — нужен квартальный номинальный ВВП (отложено).
 
 **НДС не используем как измеритель инфляции.** Ставка НДС повышена 20 → 22 % с
 01.01.2026 (плюс снижен порог УСН) — это структурный разрыв, а не инфляция спроса.
