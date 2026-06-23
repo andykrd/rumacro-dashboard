@@ -6,8 +6,10 @@
 Принцип (PRD §2): это ПРОКСИ и сопоставление рядов, а не «настоящая инфляция».
 Сырые ряды — в БД (ingest/*, data/seed/*); производные считаются на лету (transforms.py).
 """
+import csv
 import os
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -104,6 +106,35 @@ def _last(df: pd.DataFrame):
 def _qlabel(ts) -> str:
     """Timestamp → 'Q1-26' (метка квартала, без хардкода)."""
     return f"Q{(ts.month - 1) // 3 + 1}-{ts.year % 100:02d}"
+
+
+@st.cache_data
+def _events() -> list[tuple]:
+    """Датированные события из data/seed/events.csv → [(date, label, category)]."""
+    path = Path(__file__).resolve().parent / "data" / "seed" / "events.csv"
+    if not path.exists():
+        return []
+    with open(path, encoding="utf-8") as f:
+        lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    out = []
+    for r in csv.DictReader(lines):
+        try:
+            out.append((pd.Timestamp(r["date"]), r["label"], r.get("category", "")))
+        except Exception:
+            continue
+    return out
+
+
+def _add_events(fig, since=None) -> None:
+    """Вертикали событий на временной график (только попадающие в окно `since`)."""
+    for d, label, _cat in _events():
+        if since is not None and d < since:
+            continue
+        fig.add_vline(
+            x=d, line=dict(color="rgba(110,110,110,0.35)", width=1, dash="dot"),
+            annotation_text=label, annotation_position="top left",
+            annotation=dict(font=dict(size=9, color="#6c757d"), textangle=-90),
+        )
 
 
 _SEED_IDS = {"deposit_rate", "budget_deficit", "nwf_liquid", "gdp_real_yoy"}
@@ -256,7 +287,8 @@ def render_brake() -> None:
             line=dict(width=2, color="#f4a261"),
             hovertemplate="%{x|%d.%m.%Y}<br>вклады: %{y:g}%"
                           + _hover_tag(m, d["date"].iloc[-1]) + "<extra></extra>"))
-    fig.update_layout(height=380, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="% годовых",
+    _add_events(fig, since=RECENT)
+    fig.update_layout(height=380, margin=dict(l=10, r=10, t=28, b=10), yaxis_title="% годовых",
                       hovermode="closest",
                       legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
     st.plotly_chart(fig, width="stretch")
@@ -297,7 +329,8 @@ def render_result() -> None:
                 line=dict(width=2, color=color),
                 hovertemplate=f"{name}<br>%{{x|%m.%Y}}: %{{y:.1f}}%"
                               + _hover_tag(m, sc["date"].iloc[-1]) + "<extra></extra>"))
-        fig.update_layout(height=400, margin=dict(l=10, r=10, t=10, b=10), yaxis_title="% г/г",
+        _add_events(fig, since=RECENT)
+        fig.update_layout(height=400, margin=dict(l=10, r=10, t=28, b=10), yaxis_title="% г/г",
                           hovermode="closest",
                           legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
         st.plotly_chart(fig, width="stretch")
@@ -371,7 +404,8 @@ def render_result() -> None:
                 hovertemplate=f"{name}<br>%{{x|%m.%Y}}: %{{y:,.0f}} млрд ₽"
                               + _hover_tag(m, sc["date"].iloc[-1]) + "<extra></extra>"))
         if any_money:
-            fig.update_layout(height=340, margin=dict(l=10, r=10, t=10, b=10),
+            _add_events(fig, since=MONEY_FROM)
+            fig.update_layout(height=340, margin=dict(l=10, r=10, t=28, b=10),
                               yaxis_title="млрд ₽", hovermode="closest",
                               legend=dict(orientation="h", yanchor="bottom", y=1.0, x=0))
             st.plotly_chart(fig, width="stretch")
