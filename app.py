@@ -466,6 +466,15 @@ def render_result() -> None:
             st.plotly_chart(fig, width="stretch")
             st.caption("Темп M2 г/г против ориентира ЦБ 5–10%.")
 
+    # 3) «Своя корзина» базовых товаров (Термометры, §4).
+    st.divider()
+    render_basket()
+    st.caption(
+        "ℹ️ Линзы инфляции в работе: ИПЦ, наблюдаемая, ожидания, «по деньгам» — есть. "
+        "PPI, базовый ИПЦ, дефлятор ВВП, Ромир/Чек Индекс (ЕМИСС/проприетарные) — "
+        "ожидают ручных данных (источник недоступен программно из окружения)."
+    )
+
 
 # ─────────────────────────────── Контекст ───────────────────────────────────
 def render_context() -> None:
@@ -527,6 +536,106 @@ def render_methodology() -> None:
         )
 
 
+@st.cache_data
+def _basket() -> dict:
+    """data/seed/basket.csv → {good: [(date, price), ...]} (отсортировано по дате)."""
+    path = Path(__file__).resolve().parent / "data" / "seed" / "basket.csv"
+    if not path.exists():
+        return {}
+    with open(path, encoding="utf-8") as f:
+        lines = [ln for ln in f if ln.strip() and not ln.lstrip().startswith("#")]
+    goods: dict = {}
+    for r in csv.DictReader(lines):
+        try:
+            goods.setdefault(r["good"], []).append((pd.Timestamp(r["date"]), float(r["price"])))
+        except Exception:
+            continue
+    for g in goods:
+        goods[g].sort()
+    return goods
+
+
+def render_basket() -> None:
+    """«Своя корзина»: рост цен базовых товаров по официальным средним Росстата."""
+    goods = _basket()
+    st.markdown("**Своя корзина базовых товаров** — рост по официальным средним ценам Росстата")
+    rows = []
+    for name, pts in goods.items():
+        if len(pts) >= 2 and pts[0][1]:
+            growth = (pts[-1][1] / pts[0][1] - 1) * 100
+            rows.append((name, growth, pts[0][0].year, pts[-1][0].year))
+    if not rows:
+        st.info("Корзина пуста/неполна — заполните `data/seed/basket.csv` "
+                "(годовые средние цены с fedstat 31448, коды товаров — в шапке файла).")
+        return
+    rows.sort(key=lambda r: r[1])
+    fig = go.Figure(go.Bar(
+        x=[r[1] for r in rows], y=[r[0] for r in rows], orientation="h", marker_color="#bc6c25",
+        text=[f"+{r[1]:.0f}%" for r in rows], textposition="outside", cliponaxis=False,
+        hovertemplate="%{y}: +%{x:.0f}%<extra></extra>"))
+    fig.update_layout(height=90 + 46 * len(rows), margin=dict(l=10, r=46, t=10, b=10),
+                      xaxis_title="рост цены, %", showlegend=False)
+    st.plotly_chart(fig, width="stretch")
+    yspan = f"{min(r[2] for r in rows)}→{max(r[3] for r in rows)}"
+    st.caption(
+        f"⚠️ Годовые средние цены Росстата (fedstat 31448), **ОРИЕНТИРОВОЧНО**, ручной seed — "
+        f"программный доступ к ЕМИСС из окружения недоступен; уточняется/дополняется помесячно "
+        f"(коды товаров — в `data/seed/basket.csv`). Рост за {yspan}. Базовые товары часто растут "
+        f"быстрее «средней» инфляции — это и есть смысл «своей корзины»."
+    )
+
+
+def _monthly(df: pd.DataFrame) -> pd.DataFrame:
+    """Дневной ряд → месячный (среднее за месяц), дата = начало месяца."""
+    if df.empty:
+        return df
+    s = df.set_index("date")["value"].resample("MS").mean()
+    return s.reset_index()
+
+
+def render_correlations() -> None:
+    """§5: lead/lag только на темпах роста, по заданным гипотезам, с оговорками."""
+    st.subheader("🔗 Связи (lead/lag) — индикативно, не причинность")
+    st.caption(
+        "⚠️ **Корреляция ≠ причинность.** Считаем ТОЛЬКО на годовых темпах (стационарность), "
+        "скользящим окном; перебор всех пар НЕ делаем — лишь заданные гипотезы (иначе p-hacking). "
+        "Точек после 2022 мало → мощность низкая, **индикативно**. В военной экономике многое "
+        "движется общим фискально-военным драйвером: совместное движение ≠ прямая связь."
+    )
+    cpi = read_series("cpi_yoy")
+    pairs = [
+        ("M2 г/г → ИПЦ г/г", T.yoy(read_series("m2")), cpi,
+         "деньги→цены, слабая/длинная связь (+ оговорка про скорость)"),
+        ("USD/RUB г/г → ИПЦ г/г", T.yoy(_monthly(read_series("usdrub"))), cpi,
+         "импортный пасс-трю, ожид. лаг ~2–6 мес"),
+    ]
+    table, roll_for = [], None
+    for name, x, y, note in pairs:
+        if x.empty or y.empty:
+            continue
+        cc = T.cross_corr(x, y, max_lag=6)
+        table.append({"Гипотеза": name, "Лучший лаг, мес (опережение)": cc["best_lag"],
+                      "corr на лаге": cc["best_corr"], "n": cc["n"], "Оговорка": note})
+        if roll_for is None:
+            roll_for = (name, T.rolling_corr(x, y, window=12))
+    if table:
+        st.dataframe(pd.DataFrame(table), hide_index=True, width="stretch")
+    if roll_for is not None and not roll_for[1].empty:
+        rc = roll_for[1]
+        fig = go.Figure(go.Scatter(x=rc["date"], y=rc["value"], mode="lines",
+                                   line=dict(width=2, color="#457b9d"),
+                                   hovertemplate="%{x|%m.%Y}: corr %{y:.2f}<extra></extra>"))
+        fig.add_hline(y=0, line=dict(color="#adb5bd", width=1))
+        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                          yaxis_title=f"скольз. corr (12м): {roll_for[0]}",
+                          yaxis_range=[-1, 1], hovermode="closest", showlegend=False)
+        st.plotly_chart(fig, width="stretch")
+    st.caption(
+        "Гипотезы, ожидающие рядов (добавятся с источниками): **PPI → ИПЦ** (издержки, ~1–3 мес), "
+        "**Urals → дефицит** (нефтегаз. доходы, ~1–2 мес), **топливо ↔ ИПЦ** (частично механически)."
+    )
+
+
 def render_alerts() -> None:
     """Строка активных сигналов в шапке + экспандер с правилами (§6)."""
     alerts = compute_alerts()
@@ -559,6 +668,8 @@ st.divider()
 render_brake()
 st.divider()
 render_result()
+st.divider()
+render_correlations()
 st.divider()
 render_context()
 st.divider()
