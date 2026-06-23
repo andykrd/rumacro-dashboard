@@ -125,27 +125,27 @@ def render_overview() -> None:
     m2y = T.yoy(read_series("m2"))
     dvp = T.deficit_vs_plan(read_series("budget_deficit"))
     gdp = read_series("gdp_real_yoy")
-    g = T.gap(obs, cpi)
     implied = (T.naive_qtm_infl(_last(m2y), _last(gdp))
                if not m2y.empty and not gdp.empty else None)
 
-    cols = st.columns(7)
+    # 6 = три СИЛЫ (газ/тормоз) + три ВЗГЛЯДА на инфляцию. Разрыв — в блоке «Результат».
+    st.caption("**Силы:** ⛽ газ ← → 🛑 тормоз")
+    cols = st.columns(3)
     cols[0].metric("🛑 Ключевая ставка", f"{_last(kr):g}%" if not kr.empty else "—",
-                   help="Банк России")
+                   help="Банк России — главный тормоз")
     cols[1].metric("💸 M2, % г/г", f"{_last(m2y):.1f}%" if not m2y.empty else "—",
-                   help=f"ориентир ЦБ {M2_TARGET_LO:g}–{M2_TARGET_HI:g}% — сейчас выше")
+                   help=f"ориентир ЦБ {M2_TARGET_LO:g}–{M2_TARGET_HI:g}% — сейчас выше (газ)")
     cols[2].metric("💰 Дефицит / план", f"{_last(dvp):.0f}%" if not dvp.empty else "—",
-                   help=f"накопл. дефицит ÷ годовой план {BUDGET_PLAN_2026} трлн ₽")
-    cols[3].metric("🌡️ Официальная ИПЦ", f"{_last(cpi):.1f}%" if not cpi.empty else "—",
-                   help="Росстат/ЦБ, измеренная корзина, % г/г")
-    cols[4].metric("💵 По деньгам*", f"{implied:.1f}%" if implied is not None else "—",
-                   help="M2 г/г − реальный ВВП г/г. *Прокси при допущении V=const → "
-                        "сейчас ЗАВЫШАЕТ, для справки, не измеритель")
-    cols[5].metric("👁️ Наблюдаемая", f"{_last(obs):.1f}%" if not obs.empty else "—",
-                   help="опрос ИнФОМ, ощущаемая населением")
-    cols[6].metric("↔️ Разрыв", f"+{_last(g):.1f} пп" if not g.empty else "—",
-                   help=f"наблюдаемая − официальная, общий месяц {g['date'].iloc[-1]:%m.%Y}"
-                   if not g.empty else "")
+                   help=f"накопл. дефицит ÷ годовой план {BUDGET_PLAN_2026} трлн ₽ (газ)")
+    st.caption("**Три взгляда на инфляцию** (это разные вещи, не три оценки одной):")
+    lcols = st.columns(3)
+    lcols[0].metric("🌡️ Официальная ИПЦ", f"{_last(cpi):.1f}%" if not cpi.empty else "—",
+                    help="Росстат/ЦБ — измеренная корзина, % г/г")
+    lcols[1].metric("💵 По деньгам*", f"{implied:.1f}%" if implied is not None else "—",
+                    help="M2 г/г − реальный ВВП г/г. *Прокси при допущении V=const → "
+                         "сейчас ЗАВЫШАЕТ, для справки, не измеритель")
+    lcols[2].metric("👁️ Наблюдаемая", f"{_last(obs):.1f}%" if not obs.empty else "—",
+                    help="опрос ИнФОМ — ощущаемая населением")
 
 
 # ─────────────────────────────── Газ ────────────────────────────────────────
@@ -309,7 +309,8 @@ def render_result() -> None:
             cc = cpi.loc[cpi["date"] == dd, "value"].iloc[0]
             oo = obs.loc[obs["date"] == dd, "value"].iloc[0]
             if cc:
-                ratio = f" На {dd:%m.%Y} наблюдаемая в {oo / cc:.1f} раза выше официальной."
+                ratio = (f" На {dd:%m.%Y} наблюдаемая в {oo / cc:.1f} раза выше официальной "
+                         f"(разрыв +{oo - cc:.1f} пп).")
         st.caption(
             "Официальная ИПЦ (Росстат/ЦБ) и наблюдаемая/ожидания (опрос ИнФОМ) — `final`, "
             "тянутся с cbr.ru. Разрыв «ощущаемая vs официальная» — суть дашборда." + ratio
