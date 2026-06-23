@@ -26,3 +26,7 @@ data/*.db-wal
 .vscode/
 .idea/
 .DS_Store
+
+# Playwright / скриншоты (артефакты проверки)
+.playwright-mcp/
+v15_*.png
